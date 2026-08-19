@@ -33,8 +33,19 @@ tls_verify = true
 # Video Materials / 视频素材
 # -----------------------------------------------------------------------------
 
-# Available values: "pexels", "pixabay", "coverr", "local".
+# Available values: "pexels", "pixabay", "coverr", "local", "locales".
+# locales = local files + Elasticsearch clip understanding / hybrid retrieval.
+# 可选值：pexels / pixabay / coverr / local / locales。
+# locales：本地文件分片理解写入 ES，生成时按文案混合检索选片。
 video_source = "pexels"
+
+# locales project label (used when video_source = "locales").
+# Options: 国际新闻 / 电影 / 仙逆 / 凡人修仙传
+# Indexed ES documents and hybrid retrieval are scoped by this project.
+# locales 项目分类（video_source=locales 时生效）。
+# 可选：国际新闻 / 电影 / 仙逆 / 凡人修仙传
+# 索引写入与混合检索都会按该项目过滤。
+locales_project = "国际新闻"
 
 # API key lists support key rotation. Use straight ASCII double quotes and
 # separate multiple keys with commas, for example: ["key-1", "key-2"].
@@ -371,6 +382,35 @@ open_task_folder_on_completion = true
 # text_fore_color = "#FFFFFF"
 # subtitle_position = "bottom" # "top", "center", "bottom", or "custom"
 # custom_position = 70.0       # Percentage from the top when using "custom"
+
+# =============================================================================
+# Local Clip Index (Elasticsearch) / 本地分片理解索引
+# =============================================================================
+# Install: uv sync --extra elasticsearch
+# Start ES: docker compose up -d elasticsearch
+
+[es]
+clip_index_enabled = false
+elasticsearch_hosts = ["http://127.0.0.1:9200"]
+# elasticsearch_username = ""
+# elasticsearch_password = ""
+# elasticsearch_api_key = ""
+clip_index_name = "mpt_local_clips"
+clip_index_segment_seconds = 5
+# Hybrid retrieval weights: script sentences vs keyword terms.
+clip_index_sentence_weight = 0.6
+clip_index_term_weight = 0.4
+# Vision caption temperature. Some models (e.g. certain Moonshot/Kimi) only allow 1.
+clip_index_vision_temperature = 1
+# Vision API pacing between clip-caption requests (seconds).
+# High-concurrency Moonshot: 0 (no artificial wait). Low RPM (e.g. org max RPM=3): set >= 21.
+# 视觉接口节流间隔（秒）。高并发可设 0；低 RPM（如组织上限 RPM=3）建议 >= 21。
+# 失败分片不会写入弱描述到 ES。
+clip_index_vision_min_interval = 0
+clip_index_vision_max_retries = 5
+clip_index_vision_retry_base_seconds = 2
+# Optional dense_vector dims; leave 0 for BM25-only search.
+clip_index_embedding_dims = 0
 # subtitle_background_enabled = false
 # subtitle_background_color = "#000000"
 # rounded_subtitle_background = false

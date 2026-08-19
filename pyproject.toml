@@ -43,6 +43,11 @@ dependencies = [
 twelvelabs = [
     "twelvelabs>=1.2.8",
 ]
+# Optional Elasticsearch backend for local video clip understanding / retrieval.
+# Install with: uv sync --extra elasticsearch
+elasticsearch = [
+    "elasticsearch>=8.15.0,<9",
+]
 
 [dependency-groups]
 dev = [

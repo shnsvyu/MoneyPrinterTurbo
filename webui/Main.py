@@ -295,6 +295,64 @@ def _build_uploaded_file_path(uploaded_file, target_dir, allowed_extensions, pre
     return file_path
 
 
+def _persist_uploaded_local_materials(uploaded_files, video_source: str):
+    """
+    把浏览器上传的本地素材写入 storage/local_videos，并更新会话缓存。
+
+    索引到 ES 与生成视频都依赖磁盘文件；file_uploader 本身只保存在内存里。
+    """
+    from app.services import clip_index as clip_index_service
+
+    local_videos_dir = utils.storage_dir("local_videos", create=True)
+    materials = []
+    persisted = []
+    for file in uploaded_files or []:
+        file_path = _build_uploaded_file_path(
+            file,
+            local_videos_dir,
+            LOCAL_MATERIAL_EXTENSIONS,
+            "material",
+        )
+        original_filename = os.path.basename(str(file.name or ""))
+        with open(file_path, "wb") as fh:
+            fh.write(file.getbuffer())
+        clip_index_service.write_original_filename_meta(file_path, original_filename)
+        material = MaterialInfo()
+        material.provider = (
+            "locales" if const.is_locales_video_source(video_source) else "local"
+        )
+        material.url = file_path
+        material.original_filename = original_filename
+        materials.append(material)
+        persisted.append(
+            {
+                "provider": material.provider,
+                "url": material.url,
+                "duration": material.duration,
+                "original_filename": original_filename,
+            }
+        )
+    if persisted:
+        st.session_state["local_video_materials"] = persisted
+    return materials
+
+
+def _materials_from_session_local_videos(video_source: str):
+    materials = []
+    for item in st.session_state.get("local_video_materials") or []:
+        material = MaterialInfo()
+        material.provider = item.get(
+            "provider",
+            "locales" if const.is_locales_video_source(video_source) else "local",
+        )
+        material.url = item.get("url", "")
+        material.duration = item.get("duration", 0)
+        material.original_filename = item.get("original_filename") or None
+        if material.url:
+            materials.append(material)
+    return materials
+
+
 def _initialize_session_state():
     """集中初始化跨 rerun 保留的页面状态。"""
     if not st.session_state.get("cross_post_recovery_checked"):
@@ -406,7 +464,7 @@ def _build_restore_upload_requirements(params: Mapping) -> dict:
     素材和自定义音频依赖，并在用户重新生成前检查是否已经主动补充或替换。
     """
     return {
-        "local_materials": params.get("video_source") == "local",
+        "local_materials": const.is_local_video_source(params.get("video_source")),
         "custom_audio": bool(params.get("custom_audio_file")),
         "original_voice_name": params.get("voice_name") or "",
     }
@@ -427,7 +485,7 @@ def _get_unmet_restore_upload_requirements(
 
     if (
         requirements.get("local_materials")
-        and video_source == "local"
+        and const.is_local_video_source(video_source)
         and not has_local_materials
     ):
         unmet.add("local_materials")
@@ -2391,6 +2449,7 @@ def _render_video_settings(panel, params):
                 (tr("Pixabay"), "pixabay"),
                 (tr("Coverr"), "coverr"),
                 (tr("Local file"), "local"),
+                (tr("Locales ES"), "locales"),
             ]
 
             saved_video_source_name = config.app.get("video_source", "pexels")
@@ -2406,7 +2465,7 @@ def _render_video_settings(panel, params):
             )
             _set_runtime_config("app", "video_source", params.video_source)
 
-            if params.video_source == "local":
+            if const.is_local_video_source(params.video_source):
                 # Streamlit 的文件类型校验对扩展名大小写敏感，这里同时放行大小写两种形式。
                 local_file_types = sorted(
                     extension.removeprefix(".")
@@ -2419,6 +2478,127 @@ def _render_video_settings(panel, params):
                     accept_multiple_files=True,
                     key="local_video_materials_uploader",
                 )
+                if const.is_locales_video_source(params.video_source):
+                    st.info(tr("Locales ES Help"))
+                    from app.services import clip_index as clip_index_service
+
+                    project_options = list(const.LOCALES_PROJECTS)
+                    saved_project = config.app.get(
+                        "locales_project", const.DEFAULT_LOCALES_PROJECT
+                    )
+                    params.locales_project = stable_selectbox(
+                        tr("Locales Project"),
+                        options=project_options,
+                        default_value=saved_project,
+                        key="locales_project_select",
+                    )
+                    _set_runtime_config(
+                        "app", "locales_project", params.locales_project
+                    )
+
+                    if not clip_index_service.is_enabled():
+                        st.warning(tr("Locales ES Not Enabled"))
+                    else:
+                        last_index_result = st.session_state.get(
+                            "locales_index_last_result"
+                        )
+                        if last_index_result:
+                            st.caption(last_index_result)
+
+                        if st.button(
+                            tr("Index Local Materials to ES"),
+                            key="locales_index_materials_button",
+                        ):
+                            status = st.status(
+                                tr("Indexing Local Materials to ES"),
+                                expanded=True,
+                            )
+                            try:
+                                materials = []
+                                if uploaded_files:
+                                    status.write(tr("Saving Uploaded Materials"))
+                                    materials = _persist_uploaded_local_materials(
+                                        uploaded_files, params.video_source
+                                    )
+                                else:
+                                    materials = _materials_from_session_local_videos(
+                                        params.video_source
+                                    )
+
+                                path_to_name = {
+                                    m.url: (m.original_filename or "")
+                                    for m in materials
+                                    if m.url
+                                }
+                                paths = [
+                                    path
+                                    for path in path_to_name
+                                    if path and os.path.isfile(path)
+                                ]
+                                if not paths:
+                                    # 无本次上传/会话素材时，回退扫描 local_videos。
+                                    paths = clip_index_service.list_local_video_files()
+                                    path_to_name = {
+                                        path: clip_index_service.resolve_display_filename(
+                                            path
+                                        )
+                                        for path in paths
+                                    }
+
+                                if not paths:
+                                    message = tr("Index Local Materials Empty")
+                                    status.update(label=message, state="error")
+                                    st.warning(message)
+                                    st.session_state["locales_index_last_result"] = (
+                                        message
+                                    )
+                                else:
+                                    status.write(
+                                        tr("Indexing Local Materials Progress").format(
+                                            files=len(paths)
+                                        )
+                                    )
+                                    indexed = 0
+                                    errors = []
+                                    for path in paths:
+                                        result = clip_index_service.index_local_video(
+                                            path,
+                                            project=params.locales_project,
+                                            filename=path_to_name.get(path) or "",
+                                        )
+                                        indexed += int(result.get("indexed") or 0)
+                                        errors.extend(result.get("errors") or [])
+                                        status.write(
+                                            f"{result.get('filename') or Path(path).name}: "
+                                            f"+{result.get('indexed') or 0}"
+                                        )
+                                    message = tr(
+                                        "Index Local Materials to ES Done"
+                                    ).format(
+                                        indexed=indexed,
+                                        files=len(paths),
+                                    ) + f" [{params.locales_project}]"
+                                    if errors:
+                                        message += (
+                                            " | "
+                                            + tr(
+                                                "Index Local Materials Partial Errors"
+                                            ).format(count=len(errors))
+                                        )
+                                    status.update(label=message, state="complete")
+                                    st.success(message)
+                                    st.session_state["locales_index_last_result"] = (
+                                        message
+                                    )
+                            except Exception as exc:  # noqa: BLE001
+                                message = tr(
+                                    "Index Local Materials to ES Failed"
+                                ).format(error=exc)
+                                status.update(label=message, state="error")
+                                st.error(message)
+                                st.session_state["locales_index_last_result"] = message
+                                logger.exception("locales index to ES failed")
+
 
             # 文案顺序匹配会从关键词生成到最终合成全程保持叙事顺序，因此开启时
             # 顺序拼接是唯一符合实际执行逻辑的选项。同步控件值可避免界面仍显示
@@ -4089,7 +4269,7 @@ def _render_generation_controls(
             st.error(tr("Video Script and Subject Cannot Both Be Empty"))
             st.stop()
 
-        if params.video_source not in ["pexels", "pixabay", "coverr", "local"]:
+        if not const.is_supported_video_source(params.video_source):
             _remove_active_generation_task(task_id)
             st.error(tr("Please Select a Valid Video Source"))
             st.stop()
@@ -4133,9 +4313,20 @@ def _render_generation_controls(
             st.error(tr("ElevenLabs API Key Required"))
             st.stop()
 
-        if params.video_source == "local" and not has_local_materials:
-            # 本地素材为空时继续执行会先产生 TTS/字幕，最后才在素材预处理阶段失败。
-            # 在任务启动前拦截，可以避免无意义的 API 调用和中间文件。
+        if const.is_locales_video_source(params.video_source):
+            from app.services import clip_index as clip_index_service
+
+            if not clip_index_service.is_enabled():
+                _remove_active_generation_task(task_id)
+                st.error(tr("Locales ES Not Enabled"))
+                st.stop()
+
+        if (
+            const.is_local_video_source(params.video_source)
+            and not const.is_locales_video_source(params.video_source)
+            and not has_local_materials
+        ):
+            # 普通 local 需要上传素材；locales 按所选项目从 ES 检索，可不传文件。
             _remove_active_generation_task(task_id)
             st.error(tr("Please Upload Local Materials First"))
             st.stop()
@@ -4197,49 +4388,22 @@ def _render_generation_controls(
             params.custom_audio_file = custom_audio_path
 
         if uploaded_files:
-            local_videos_dir = utils.storage_dir("local_videos", create=True)
-            # 每次重新上传时都以本次选择的素材为准，避免旧素材不断重复追加。
-            params.video_materials = []
-            persisted_local_materials = []
-            for file in uploaded_files:
-                try:
-                    file_path = _build_uploaded_file_path(
-                        file,
-                        local_videos_dir,
-                        LOCAL_MATERIAL_EXTENSIONS,
-                        "material",
-                    )
-                except ValueError:
-                    _remove_active_generation_task(task_id)
-                    st.error(tr("Unsupported Upload File Type"))
-                    st.stop()
-                with open(file_path, "wb") as f:
-                    f.write(file.getbuffer())
-                    m = MaterialInfo()
-                    m.provider = "local"
-                    m.url = file_path
-                    params.video_materials.append(m)
-                    persisted_local_materials.append(
-                        {
-                            "provider": m.provider,
-                            "url": m.url,
-                            "duration": m.duration,
-                        }
-                    )
-            # 将已上传并保存到本地的视频素材写入会话，供后续只改文案时直接复用。
-            st.session_state["local_video_materials"] = persisted_local_materials
+            try:
+                params.video_materials = _persist_uploaded_local_materials(
+                    uploaded_files, params.video_source
+                )
+            except ValueError:
+                _remove_active_generation_task(task_id)
+                st.error(tr("Unsupported Upload File Type"))
+                st.stop()
         elif (
-            params.video_source == "local" and st.session_state["local_video_materials"]
+            const.is_local_video_source(params.video_source)
+            and st.session_state["local_video_materials"]
         ):
             # 当用户没有重新上传文件时，复用最近一次已经保存到磁盘的本地素材列表。
-            params.video_materials = []
-            for material in st.session_state["local_video_materials"]:
-                m = MaterialInfo()
-                m.provider = material.get("provider", "local")
-                m.url = material.get("url", "")
-                m.duration = material.get("duration", 0)
-                if m.url:
-                    params.video_materials.append(m)
+            params.video_materials = _materials_from_session_local_videos(
+                params.video_source
+            )
 
         reusable_voice_preview = _get_reusable_full_voice_preview(
             params,

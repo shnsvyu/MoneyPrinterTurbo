@@ -55,6 +55,8 @@ class MaterialInfo:
     provider: str = "pexels"
     url: str = ""
     duration: int = 0
+    # 本地上传落盘可能使用 UUID 文件名；此字段保留上传前的原始文件名，供 ES 索引展示。
+    original_filename: Optional[str] = None
     # 在线素材搜索会附带经过筛选的公开来源信息，供搜索缓存和任务记录复用。
     # 本地上传素材不需要填写；写入任务文件前仍会按字段白名单重新构造，
     # 避免外部请求传入的签名 URL、凭据或无关字段进入持久化数据。
@@ -88,6 +90,8 @@ class VideoParams(BaseModel):
     video_count: int = Field(default=1, ge=1)
 
     video_source: Optional[str] = "pexels"
+    # locales 素材所属项目（国际新闻 / 电影 / 仙逆 / 凡人修仙传）
+    locales_project: Optional[str] = ""
     video_materials: Optional[List[MaterialInfo]] = (
         None  # Materials used to generate the video
     )
@@ -467,3 +471,31 @@ class VideoMaterialUploadResponse(BaseResponse):
                 },
             },
         }
+
+
+class ClipIndexRequest(BaseModel):
+    """索引单个本地视频，或 index_all=true 时扫描 local_videos 目录。"""
+
+    video_path: Optional[str] = Field(
+        default="",
+        max_length=1024,
+        description="文件名或 local_videos 下的相对路径；index_all 时忽略",
+    )
+    # 项目：国际新闻 / 电影 / 仙逆 / 凡人修仙传
+    project: Optional[str] = Field(default="", max_length=64)
+    # 上传前的原始文件名；留空则读 sidecar 或磁盘名
+    filename: Optional[str] = Field(default="", max_length=512)
+    index_all: bool = False
+    max_clip_duration: Optional[int] = Field(default=None, ge=1, le=60)
+    clip_speed: float = Field(default=1.0, gt=0, le=4)
+    force: bool = True
+
+
+class ClipSearchRequest(BaseModel):
+    query: str = Field(default="", max_length=500)
+    video_script: str = Field(default="", max_length=8000)
+    video_terms: Optional[list[str] | str] = None
+    project: Optional[str] = Field(default="", max_length=64)
+    size: int = Field(default=10, ge=1, le=100)
+    # hybrid=true 时按「脚本句子 + 关键词」融合；false 时仅用 query/script 单路检索
+    hybrid: bool = True

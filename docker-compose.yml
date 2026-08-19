@@ -2,6 +2,18 @@ x-common-volumes: &common-volumes
   - ./:/MoneyPrinterTurbo
 
 services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.28
+    container_name: "moneyprinterturbo-elasticsearch"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - mpt_es_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
   webui:
     build:
       context: .
@@ -22,3 +34,6 @@ services:
     command: [ "python3", "main.py" ]
     volumes: *common-volumes
     restart: always
+
+volumes:
+  mpt_es_data:

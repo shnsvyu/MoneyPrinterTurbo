@@ -281,6 +281,14 @@
     "Please Enter the Coverr API Key": "Por favor, insira a **Chave de API do Coverr**",
     "Video Encoder": "Codificador de vídeo",
     "Default Video Encoder": "Padrão (recomendado)",
-    "Video Encoder Help": "Opção avançada. Padrão segue a política estável do aplicativo, atualmente libx264. Se um codificador de hardware não estiver disponível, o aplicativo retorna automaticamente para libx264."
+    "Video Encoder Help": "Opção avançada. Padrão segue a política estável do aplicativo, atualmente libx264. Se um codificador de hardware não estiver disponível, o aplicativo retorna automaticamente para libx264.",
+    "Locales ES": "Locales ES Index",
+    "Locales ES Help": "Slice and caption local videos into Elasticsearch, then hybrid-match clips by script sentences and keywords. Requires [es] clip_index_enabled=true and a running ES.",
+    "Locales ES Not Enabled": "locales requires Elasticsearch indexing: set clip_index_enabled=true under [es] in config.toml and ensure ES is reachable.",
+    "Locales Project": "Project",
+    "Index Local Materials to ES": "Index Local Materials to ES",
+    "Indexing Local Materials to ES": "Slicing, understanding, and writing to Elasticsearch…",
+    "Index Local Materials to ES Done": "Indexed {indexed} clips from {files} files",
+    "Index Local Materials to ES Failed": "Indexing failed: {error}"
   }
 }

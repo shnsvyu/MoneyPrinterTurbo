@@ -16,6 +16,7 @@ from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
 from app.services import (
+    clip_index,
     elevenlabs_music,
     llm,
     material,
@@ -563,8 +564,58 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     return subtitle_path
 
 
-def get_video_materials(task_id, params, video_terms, audio_duration):
-    if params.video_source == "local":
+def get_video_materials(task_id, params, video_terms, audio_duration, video_script=""):
+    if const.is_local_video_source(params.video_source):
+        use_locales = const.is_locales_video_source(params.video_source)
+
+        # locales：只按所选项目从 ES 混合检索选片，不依赖本次上传文件路径。
+        if use_locales:
+            logger.info("\n\n## locales hybrid materials from Elasticsearch")
+            if not clip_index.is_enabled():
+                _mark_task_failed(
+                    task_id,
+                    "materials",
+                    "video_source=locales requires [es] clip_index_enabled=true "
+                    "and a reachable Elasticsearch",
+                )
+                return None
+            try:
+                project = const.normalize_locales_project(
+                    getattr(params, "locales_project", None)
+                    or config.app.get("locales_project")
+                )
+                matched = clip_index.materialize_hybrid_clips(
+                    task_id=task_id,
+                    video_script=video_script or params.video_script or "",
+                    video_terms=video_terms,
+                    project=project,
+                    audio_duration=audio_duration * max(1, int(params.video_count or 1)),
+                    max_clip_duration=params.video_clip_duration,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _mark_task_failed(
+                    task_id,
+                    "materials",
+                    f"locales hybrid clip match failed: {exc}",
+                )
+                return None
+            if not matched:
+                _mark_task_failed(
+                    task_id,
+                    "materials",
+                    "locales hybrid clip match returned no segments; "
+                    f"project={project}. "
+                    "请确认已用同一项目「将本地素材索引到 ES」，"
+                    "且文案/关键词能匹配 caption/tags",
+                )
+                return None
+            logger.info(
+                f"locales hybrid match selected {len(matched)} segments "
+                f"(project={project})"
+            )
+            params.video_concat_mode = VideoConcatMode.sequential
+            return matched
+
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
             materials=params.video_materials, clip_duration=params.video_clip_duration
@@ -576,33 +627,34 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
                 "no valid local video materials were found",
             )
             return None
+
         return [material_info.url for material_info in materials]
-    else:
-        logger.info(f"\n\n## downloading videos from {params.video_source}")
-        # 顺序匹配模式只在用户显式开启时生效。这里强制素材下载按关键词顺序
-        # 轮询，避免某个早期关键词下载太多素材，把后续脚本主题挤出最终时间线。
-        downloaded_videos = material.download_videos(
-            task_id=task_id,
-            search_terms=video_terms,
-            source=params.video_source,
-            video_aspect=params.video_aspect,
-            video_concat_mode=(
-                VideoConcatMode.sequential
-                if params.match_materials_to_script
-                else params.video_concat_mode
-            ),
-            audio_duration=audio_duration * params.video_count,
-            max_clip_duration=params.video_clip_duration,
-            match_script_order=params.match_materials_to_script,
+
+    logger.info(f"\n\n## downloading videos from {params.video_source}")
+    # 顺序匹配模式只在用户显式开启时生效。这里强制素材下载按关键词顺序
+    # 轮询，避免某个早期关键词下载太多素材，把后续脚本主题挤出最终时间线。
+    downloaded_videos = material.download_videos(
+        task_id=task_id,
+        search_terms=video_terms,
+        source=params.video_source,
+        video_aspect=params.video_aspect,
+        video_concat_mode=(
+            VideoConcatMode.sequential
+            if params.match_materials_to_script
+            else params.video_concat_mode
+        ),
+        audio_duration=audio_duration * params.video_count,
+        max_clip_duration=params.video_clip_duration,
+        match_script_order=params.match_materials_to_script,
+    )
+    if not downloaded_videos:
+        _mark_task_failed(
+            task_id,
+            "materials",
+            f"failed to download video materials from {params.video_source}",
         )
-        if not downloaded_videos:
-            _mark_task_failed(
-                task_id,
-                "materials",
-                f"failed to download video materials from {params.video_source}",
-            )
-            return None
-        return downloaded_videos
+        return None
+    return downloaded_videos
 
 
 def generate_final_videos(
@@ -1107,14 +1159,23 @@ def _run_pipeline(
         return {"script": video_script}
 
     # 2. Generate terms
+    # 在线素材与 locales（ES 混合检索）需要关键词；普通 local 可跳过。
     video_terms = ""
-    if params.video_source != "local":
+    need_terms = not const.is_local_video_source(
+        params.video_source
+    ) or const.is_locales_video_source(params.video_source)
+    if need_terms:
         video_terms = generate_terms(task_id, params, video_script)
-        if not video_terms:
+        if not video_terms and not const.is_local_video_source(params.video_source):
             return _mark_task_failed(
                 task_id,
                 "terms",
                 "failed to generate video search terms",
+            )
+        if not video_terms and const.is_locales_video_source(params.video_source):
+            logger.warning(
+                "locales mode: no search terms generated, "
+                "will rely on script sentences only"
             )
 
     save_script_data(task_id, video_script, video_terms, params)
@@ -1170,7 +1231,7 @@ def _run_pipeline(
 
     # 5. Get video materials
     downloaded_videos = get_video_materials(
-        task_id, params, video_terms, audio_duration
+        task_id, params, video_terms, audio_duration, video_script=video_script
     )
     if not downloaded_videos:
         return _mark_task_failed(

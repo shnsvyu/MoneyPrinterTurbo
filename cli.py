@@ -127,6 +127,8 @@ def _bgm_type(value: str) -> str:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    from app.models import const
+
     parser = argparse.ArgumentParser(
         description=(
             "Generate MoneyPrinterTurbo videos without the WebUI.\n\n"
@@ -138,6 +140,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 Examples:
   Generate a complete video with the default Edge TTS voice:
     uv run python cli.py --video-subject "How AI is changing everyday life"
+
+  Generate from local ES-indexed files (locales):
+    uv run python cli.py --video-subject "How AI is changing everyday life" \\
+      --video-source locales --locales-project 仙逆
 
   Generate from local files. Relative paths use the current working directory;
   absolute paths are also accepted:
@@ -212,17 +218,30 @@ Output and exit status:
     material_group.add_argument(
         "--video-source",
         default="pexels",
-        choices=["pexels", "pixabay", "coverr", "local"],
-        help="video material provider; online providers require matching API keys in config.toml",
+        choices=list(const.VIDEO_SOURCES),
+        help=(
+            "video material provider; online providers require matching API keys in "
+            "config.toml; 'local' uses uploaded files; 'locales' indexes local files "
+            "into Elasticsearch for hybrid retrieval"
+        ),
     )
     material_group.add_argument(
         "--video-materials",
         default="",
         metavar="PATH[,PATH...]",
         help=(
-            "comma-separated local image/video paths for --video-source local; relative "
-            "paths use the current working directory, then storage/local_videos as a "
-            "compatibility fallback; absolute paths are accepted"
+            "comma-separated local image/video paths for --video-source local/locales; "
+            "relative paths use the current working directory, then storage/local_videos "
+            "as a compatibility fallback; absolute paths are accepted"
+        ),
+    )
+    material_group.add_argument(
+        "--locales-project",
+        default="",
+        choices=["", *const.LOCALES_PROJECTS],
+        help=(
+            "locales project label stored in Elasticsearch and used for retrieval: "
+            "国际新闻 / 电影 / 仙逆 / 凡人修仙传"
         ),
     )
     material_group.add_argument(
@@ -459,13 +478,28 @@ Output and exit status:
 
     stage_requires_materials = args.stop_at in {"materials", "video"}
     has_video_materials = bool((args.video_materials or "").strip())
-    if args.video_source == "local" and stage_requires_materials and not has_video_materials:
+    if (
+        args.video_source == "local"
+        and stage_requires_materials
+        and not has_video_materials
+    ):
         parser.error(
             "--video-materials is required with --video-source local when "
             "--stop-at is materials or video"
         )
-    if args.video_source != "local" and has_video_materials:
-        parser.error("--video-materials can only be used with --video-source local")
+    if args.video_source == "locales" and has_video_materials:
+        # locales 按项目从 ES 检索，忽略本地上传参数，避免误导。
+        logger.warning(
+            "--video-materials is ignored with --video-source locales; "
+            "clips are retrieved by --locales-project from Elasticsearch"
+        )
+    if (
+        not const.is_local_video_source(args.video_source)
+        and has_video_materials
+    ):
+        parser.error(
+            "--video-materials can only be used with --video-source local or locales"
+        )
 
     if args.bgm_file:
         if args.bgm_type in (None, "custom"):
@@ -529,6 +563,8 @@ def build_video_params(args: argparse.Namespace) -> VideoParams:
         "voice_name": args.voice_name,
         "subtitle_enabled": args.subtitle_enabled,
     }
+    if getattr(args, "locales_project", ""):
+        params_kwargs["locales_project"] = args.locales_project
 
     optional_arg_names = [
         "video_language",
@@ -713,7 +749,10 @@ def prepare_cli_files(params: VideoParams, stop_at: str) -> None:
         # 下游根据 resource/fonts 内的文件名拼接路径，因此仍保留纯文件名。
         params.font_name = os.path.basename(font_path)
 
-    if params.video_source != "local" or stop_at not in {"materials", "video"}:
+    if (
+        not const.is_local_video_source(params.video_source)
+        or stop_at not in {"materials", "video"}
+    ):
         return
 
     local_videos_dir = utils.storage_dir("local_videos", create=True)

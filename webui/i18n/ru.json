@@ -281,6 +281,14 @@
     "Custom Position (% from top)": "Пользовательское положение (% от верхнего края)",
     "Please enter a value between 0 and 100": "Введите значение от 0 до 100",
     "Please enter a valid number": "Введите корректное число",
-    "Please Select a Valid Video Source": "Выберите поддерживаемый источник материалов"
+    "Please Select a Valid Video Source": "Выберите поддерживаемый источник материалов",
+    "Locales ES": "Locales ES Index",
+    "Locales ES Help": "Slice and caption local videos into Elasticsearch, then hybrid-match clips by script sentences and keywords. Requires [es] clip_index_enabled=true and a running ES.",
+    "Locales ES Not Enabled": "locales requires Elasticsearch indexing: set clip_index_enabled=true under [es] in config.toml and ensure ES is reachable.",
+    "Locales Project": "Project",
+    "Index Local Materials to ES": "Index Local Materials to ES",
+    "Indexing Local Materials to ES": "Slicing, understanding, and writing to Elasticsearch…",
+    "Index Local Materials to ES Done": "Indexed {indexed} clips from {files} files",
+    "Index Local Materials to ES Failed": "Indexing failed: {error}"
   }
 }

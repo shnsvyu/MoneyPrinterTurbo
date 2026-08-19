@@ -281,6 +281,14 @@
     "Please Enter the Coverr API Key": "Vui lòng nhập **API Key Coverr**",
     "Video Encoder": "Bộ Mã Hóa Video",
     "Default Video Encoder": "Mặc định (Khuyên dùng)",
-    "Video Encoder Help": "Tùy chọn nâng cao. Mặc định tuân theo chính sách mã hóa ổn định của ứng dụng, hiện là libx264. Nếu bộ mã hóa phần cứng không khả dụng, ứng dụng tự động chuyển về libx264."
+    "Video Encoder Help": "Tùy chọn nâng cao. Mặc định tuân theo chính sách mã hóa ổn định của ứng dụng, hiện là libx264. Nếu bộ mã hóa phần cứng không khả dụng, ứng dụng tự động chuyển về libx264.",
+    "Locales ES": "Locales ES Index",
+    "Locales ES Help": "Slice and caption local videos into Elasticsearch, then hybrid-match clips by script sentences and keywords. Requires [es] clip_index_enabled=true and a running ES.",
+    "Locales ES Not Enabled": "locales requires Elasticsearch indexing: set clip_index_enabled=true under [es] in config.toml and ensure ES is reachable.",
+    "Locales Project": "Project",
+    "Index Local Materials to ES": "Index Local Materials to ES",
+    "Indexing Local Materials to ES": "Slicing, understanding, and writing to Elasticsearch…",
+    "Index Local Materials to ES Done": "Indexed {indexed} clips from {files} files",
+    "Index Local Materials to ES Failed": "Indexing failed: {error}"
   }
 }
